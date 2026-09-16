@@ -1,8 +1,12 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import { MOCK_CATEGORIES, MOCK_RECIPES, MOCK_USERS, unaccent, generateSlug } from './src/data/mockData';
+import { Recipe, Category, ApplicationUser, Role, RecipeStatus } from './src/types';
 
-// Cache structure implementing IMemoryCache with 60-minute sliding expiration (SRS FR-CAT-001)
+// =========================================================================
+// IMemoryCache with 60-minute sliding expiration (SRS FR-CAT-001)
+// =========================================================================
 interface CacheEntry<T> {
   value: T;
   expiresAt: number;
@@ -21,7 +25,7 @@ class MemoryCache {
       this.cache.delete(key);
       return { hit: false };
     }
-    // Sliding expiration: update expiresAt on access
+    // Sliding expiration: reset TTL on each access
     entry.lastAccessed = now;
     entry.expiresAt = now + entry.slidingMinutes * 60 * 1000;
     return { 
@@ -67,257 +71,114 @@ class MemoryCache {
 
 const memoryCache = new MemoryCache();
 
-// SlugHelper (SRS FR-CAT-003)
-function generateSlug(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[đĐ]/g, 'd')
-    .replace(/[^a-z0-9\s-]/g, '')
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-');
-}
+// =========================================================================
+// In-Memory Database Seed (Sync with types and mock data)
+// =========================================================================
+let dbCategories: Category[] = JSON.parse(JSON.stringify(MOCK_CATEGORIES));
+let dbRecipes: Recipe[] = JSON.parse(JSON.stringify(MOCK_RECIPES));
+let dbUsers: ApplicationUser[] = JSON.parse(JSON.stringify(MOCK_USERS));
 
-// In-memory Database Seed for Categories & Recipes
-interface CategoryEntity {
-  id: string;
-  name: string;
-  slug: string;
-  description: string;
-  imageUrl?: string;
-  orderIndex: number;
-  createdAt: string;
-}
-
-interface RecipeEntity {
-  id: string;
-  title: string;
-  slug: string;
-  description: string;
-  categoryId: string;
-  authorId: string;
-  authorName: string;
-  authorAvatar?: string;
-  status: 'Published' | 'Draft' | 'Archived';
-  difficulty: 'Easy' | 'Medium' | 'Hard' | 'Expert';
-  prepTimeMinutes: number;
-  cookTimeMinutes: number;
-  servings: number;
-  thumbnailUrl: string;
-  createdAt: string;
-  viewCount: number;
-  likeCount: number;
-}
-
-let dbCategories: CategoryEntity[] = [
-  {
-    id: 'cat-1',
-    name: 'Món Chính',
-    slug: 'mon-chinh',
-    description: 'Các món ăn chính thơm ngon, đậm đà giàu dinh dưỡng cho bữa cơm gia đình Việt.',
-    imageUrl: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=1200&q=80',
-    orderIndex: 1,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'cat-2',
-    name: 'Món Canh',
-    slug: 'mon-canh',
-    description: 'Canh ngọt thanh mát giải nhiệt ngày hè, ấm lòng ngày đông.',
-    imageUrl: 'https://images.unsplash.com/photo-1547592166-23ac45744acd?auto=format&fit=crop&w=1200&q=80',
-    orderIndex: 2,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'cat-3',
-    name: 'Bún & Phở',
-    slug: 'bun-pho',
-    description: 'Tinh hoa ẩm thực truyền thống nước lèo phở bò, bún chả, bún thang...',
-    imageUrl: 'https://images.unsplash.com/photo-1582878826629-29b7ad1cdc43?auto=format&fit=crop&w=1200&q=80',
-    orderIndex: 3,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'cat-4',
-    name: 'Tráng Miệng',
-    slug: 'trang-mieng',
-    description: 'Các món chè bưởi, bánh ngọt, trái cây thanh mát cho kết thúc hoàn hảo.',
-    imageUrl: 'https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=1200&q=80',
-    orderIndex: 4,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'cat-5',
-    name: 'Đồ Uống & Sinh Tố',
-    slug: 'do-uong',
-    description: 'Nước ép detox, trà hoa quả tươi mát bổ dưỡng mỗi ngày.',
-    imageUrl: 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=1200&q=80',
-    orderIndex: 5,
-    createdAt: new Date().toISOString(),
-  },
-];
-
-let dbRecipes: RecipeEntity[] = [
-  {
-    id: 'rcp-1',
-    title: 'Phở Bò Tái Lăn Hà Nội Chuẩn Vị',
-    slug: 'pho-bo-tai-lan-ha-noi',
-    description: 'Bí quyết nấu phở bò tái lăn chuẩn vị truyền thống Hà Thành với nước dùng trong vắt thanh ngọt.',
-    categoryId: 'cat-3',
-    authorId: 'usr-chef-1',
-    authorName: 'Chef Minh Tuấn',
-    authorAvatar: 'https://images.unsplash.com/photo-1577219491135-ce391730fb2c?auto=format&fit=crop&w=400&q=80',
-    status: 'Published',
-    difficulty: 'Medium',
-    prepTimeMinutes: 30,
-    cookTimeMinutes: 180,
-    servings: 4,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1582878826629-29b7ad1cdc43?auto=format&fit=crop&w=800&q=80',
-    createdAt: new Date().toISOString(),
-    viewCount: 1420,
-    likeCount: 145,
-  },
-  {
-    id: 'rcp-2',
-    title: 'Cá Kho Tộ Miền Tây Đậm Đà',
-    slug: 'ca-kho-to-mien-tay',
-    description: 'Cá bống hoặc cá lóc kho tộ sánh quyện nước màu dừa, tiêu đen thơm lừng.',
-    categoryId: 'cat-1',
-    authorId: 'usr-chef-1',
-    authorName: 'Chef Minh Tuấn',
-    authorAvatar: 'https://images.unsplash.com/photo-1577219491135-ce391730fb2c?auto=format&fit=crop&w=400&q=80',
-    status: 'Published',
-    difficulty: 'Easy',
-    prepTimeMinutes: 15,
-    cookTimeMinutes: 45,
-    servings: 4,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80',
-    createdAt: new Date().toISOString(),
-    viewCount: 890,
-    likeCount: 78,
-  },
-  {
-    id: 'rcp-3',
-    title: 'Canh Chua Cá Hồi Thanh Mát',
-    slug: 'canh-chua-ca-hoi-thanh-mat',
-    description: 'Vị chua dịu từ me và cà chua, dứa thơm kết hợp vị béo ngọt của lườn cá hồi.',
-    categoryId: 'cat-2',
-    authorId: 'usr-chef-2',
-    authorName: 'Bếp Trưởng Hoàng Oanh',
-    authorAvatar: 'https://images.unsplash.com/photo-1583394838336-acd977736f90?auto=format&fit=crop&w=400&q=80',
-    status: 'Published',
-    difficulty: 'Easy',
-    prepTimeMinutes: 15,
-    cookTimeMinutes: 20,
-    servings: 4,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1547592166-23ac45744acd?auto=format&fit=crop&w=800&q=80',
-    createdAt: new Date().toISOString(),
-    viewCount: 650,
-    likeCount: 52,
-  },
-  {
-    id: 'rcp-4',
-    title: 'Chè Bưởi An Giang Giòn Sần Sật',
-    slug: 'che-buoi-an-giang-gion-san-sat',
-    description: 'Bí quyết khử đắng cùi bưởi hoàn hảo, cốt dừa béo ngậy đậu xanh mềm mịn.',
-    categoryId: 'cat-4',
-    authorId: 'usr-chef-2',
-    authorName: 'Bếp Trưởng Hoàng Oanh',
-    authorAvatar: 'https://images.unsplash.com/photo-1583394838336-acd977736f90?auto=format&fit=crop&w=400&q=80',
-    status: 'Published',
-    difficulty: 'Hard',
-    prepTimeMinutes: 60,
-    cookTimeMinutes: 40,
-    servings: 6,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=800&q=80',
-    createdAt: new Date().toISOString(),
-    viewCount: 1120,
-    likeCount: 96,
-  },
-  {
-    id: 'rcp-5',
-    title: 'Trà Đào Cam Sả Mát Lạnh',
-    slug: 'tra-dao-cam-sa-mat-lanh',
-    description: 'Thức uống giải khát số 1 cho mùa hè với hương thơm tự nhiên từ sả cây tươi và đào ngâm giòn.',
-    categoryId: 'cat-5',
-    authorId: 'usr-chef-1',
-    authorName: 'Chef Minh Tuấn',
-    authorAvatar: 'https://images.unsplash.com/photo-1577219491135-ce391730fb2c?auto=format&fit=crop&w=400&q=80',
-    status: 'Published',
-    difficulty: 'Easy',
-    prepTimeMinutes: 10,
-    cookTimeMinutes: 5,
-    servings: 2,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=800&q=80',
-    createdAt: new Date().toISOString(),
-    viewCount: 780,
-    likeCount: 64,
-  },
-  {
-    id: 'rcp-6',
-    title: 'Bò Kho Nước Dừa Bánh Mì (Bản Nháp)',
-    slug: 'bo-kho-nuoc-dua-banh-mi',
-    description: 'Công thức đang thử nghiệm định lượng gia vị thảo quả và quế hồi.',
-    categoryId: 'cat-1',
-    authorId: 'usr-chef-1',
-    authorName: 'Chef Minh Tuấn',
-    authorAvatar: 'https://images.unsplash.com/photo-1577219491135-ce391730fb2c?auto=format&fit=crop&w=400&q=80',
-    status: 'Draft',
-    difficulty: 'Medium',
-    prepTimeMinutes: 20,
-    cookTimeMinutes: 60,
-    servings: 4,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80',
-    createdAt: new Date().toISOString(),
-    viewCount: 12,
-    likeCount: 2,
-  },
-];
-
-// Helper to authenticate user from headers or mock
-function getAuthUser(req: Request): { id: string; role: 'Guest' | 'Author' | 'Admin'; displayName: string } {
+// Helper to authenticate user from headers (Authorization Bearer / x-user-role)
+function getAuthUser(req: Request): { id: string; role: Role; displayName: string; user?: ApplicationUser } {
   const authHeader = req.headers.authorization;
   const roleHeader = (req.headers['x-user-role'] as string) || '';
   const userIdHeader = (req.headers['x-user-id'] as string) || '';
 
-  // Check Bearer token or headers
   if (roleHeader === 'Admin' || (authHeader && authHeader.includes('admin'))) {
-    return { id: userIdHeader || 'usr-admin-1', role: 'Admin', displayName: 'Hoàng Nam (Admin)' };
+    const adminUser = dbUsers.find((u) => u.role === 'Admin') || dbUsers[2];
+    return { id: adminUser.id, role: 'Admin', displayName: adminUser.displayName, user: adminUser };
   }
   if (roleHeader === 'Author' || (authHeader && authHeader.includes('author')) || (authHeader && authHeader.startsWith('Bearer '))) {
-    return { id: userIdHeader || 'usr-chef-1', role: 'Author', displayName: 'Chef Minh Tuấn' };
+    const authorUser = dbUsers.find((u) => u.id === userIdHeader) || dbUsers[0];
+    return { id: authorUser.id, role: 'Author', displayName: authorUser.displayName, user: authorUser };
   }
   return { id: 'guest', role: 'Guest', displayName: 'Khách vãng lai' };
 }
 
+// Generate unique slug for category or recipe
+function generateUniqueCategorySlug(name: string): string {
+  const baseSlug = generateSlug(name);
+  let candidate = baseSlug;
+  let suffix = 2;
+  while (dbCategories.some((c) => c.slug === candidate)) {
+    candidate = `${baseSlug}-${suffix}`;
+    suffix++;
+  }
+  return candidate;
+}
+
+function generateUniqueRecipeSlug(title: string): string {
+  const baseSlug = generateSlug(title);
+  let candidate = baseSlug;
+  let suffix = 2;
+  while (dbRecipes.some((r) => r.slug === candidate)) {
+    candidate = `${baseSlug}-${suffix}`;
+    suffix++;
+  }
+  return candidate;
+}
+
+// =========================================================================
+// Start Express Server
+// =========================================================================
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json());
 
-  // API ROUTE: Health check
+  // -----------------------------------------------------------------------
+  // DIAGNOSTICS & SYSTEM HEALTH
+  // -----------------------------------------------------------------------
   app.get('/api/health', (req, res) => {
     res.json({
       status: 'Healthy',
       timestamp: new Date().toISOString(),
+      version: '1.0.0 (ASP.NET Core .NET 10 Clean Architecture API Bridge)',
+      uptimeSeconds: Math.round(process.uptime()),
+      database: {
+        status: 'Healthy',
+        latencyMs: 3,
+        totalCategories: dbCategories.length,
+        totalRecipes: dbRecipes.length,
+      },
       cache: {
+        status: 'Healthy',
+        provider: 'IMemoryCache (Sliding 60m)',
         activeKeys: memoryCache.getEntries().length,
-      }
+        entries: memoryCache.getEntries(),
+      },
     });
   });
 
-  // ==========================================
-  // FR-CAT-001: Xem Danh sách Danh mục
+  app.get('/api/v1/stats', (req, res) => {
+    const totalRecipes = dbRecipes.length;
+    const publishedCount = dbRecipes.filter((r) => r.status === 'Published').length;
+    const draftCount = dbRecipes.filter((r) => r.status === 'Draft').length;
+    const archivedCount = dbRecipes.filter((r) => r.status === 'Archived').length;
+    const totalCategories = dbCategories.length;
+    const totalViews = dbRecipes.reduce((sum, r) => sum + (r.viewCount || 0), 0);
+    const totalLikes = dbRecipes.reduce((sum, r) => sum + (r.likeCount || 0), 0);
+
+    res.json({
+      totalRecipes,
+      publishedCount,
+      draftCount,
+      archivedCount,
+      totalCategories,
+      totalViews,
+      totalLikes,
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // FR-CAT-001: Xem Danh Sách Tất Cả Danh Mục
   // GET /api/v1/categories
-  // Sắp xếp Name tăng dần, kèm số lượng công thức đã xuất bản (Published).
-  // IMemoryCache key: "categories:all" với TTL 60 phút (sliding expiration).
-  // ==========================================
+  // Sắp xếp Name tăng dần, kèm số lượng Published recipes. Cache 60m sliding.
+  // -----------------------------------------------------------------------
   app.get('/api/v1/categories', (req: Request, res: Response) => {
     const cacheKey = 'categories:all';
-    const cached = memoryCache.get<any[]>(cacheKey);
+    const cached = memoryCache.get<Category[]>(cacheKey);
 
     if (cached.hit && cached.data) {
       res.setHeader('X-Cache', 'HIT');
@@ -325,27 +186,19 @@ async function startServer() {
       return res.status(200).json(cached.data);
     }
 
-    // Cache Miss -> Query Database
-    // Tính recipeCount chỉ đếm recipes có Status == 'Published'
+    // Cache Miss -> Tính toán và nạp vào cache
     const categoryDtos = dbCategories
       .map((cat) => {
         const publishedCount = dbRecipes.filter(
           (r) => r.categoryId === cat.id && r.status === 'Published'
         ).length;
         return {
-          id: cat.id,
-          name: cat.name,
-          slug: cat.slug,
-          description: cat.description,
-          imageUrl: cat.imageUrl,
+          ...cat,
           recipeCount: publishedCount,
-          orderIndex: cat.orderIndex,
         };
       })
-      // Sắp xếp theo Name tăng dần
       .sort((a, b) => a.name.localeCompare(b.name, 'vi', { sensitivity: 'base' }));
 
-    // Lưu vào IMemoryCache với TTL 60 phút (sliding expiration)
     memoryCache.set(cacheKey, categoryDtos, 60);
 
     res.setHeader('X-Cache', 'MISS');
@@ -353,19 +206,16 @@ async function startServer() {
     return res.status(200).json(categoryDtos);
   });
 
-  // ==========================================
-  // FR-CAT-002: Xem Chi tiết Danh mục và Công thức
+  // -----------------------------------------------------------------------
+  // FR-CAT-002: Xem Chi Tiết Danh Mục & Phân Trang Recipes
   // GET /api/v1/categories/:slug?page=1&pageSize=12
-  // Guest chỉ thấy Published; Author thấy thêm Draft của chính mình; Admin thấy tất cả.
-  // Phân trang OFFSET-based: SKIP (page-1)*pageSize TAKE pageSize.
-  // RFC 7807 problem details nếu 404.
-  // ==========================================
+  // Guest: Published, Author: Published + own drafts, Admin: All
+  // -----------------------------------------------------------------------
   app.get('/api/v1/categories/:slug', (req: Request, res: Response) => {
     const { slug } = req.params;
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const pageSize = Math.max(1, Math.min(50, parseInt(req.query.pageSize as string) || 12));
 
-    // 1. Tìm category theo slug
     const category = dbCategories.find((c) => c.slug === slug);
     if (!category) {
       return res.status(404).json({
@@ -377,13 +227,8 @@ async function startServer() {
       });
     }
 
-    // 2. Kiểm tra quyền của currentUser
     const currentUser = getAuthUser(req);
 
-    // 3. Query recipes thuộc category:
-    // Guest: Published
-    // Author: Published + Draft của chính mình
-    // Admin: Tất cả
     const filteredRecipes = dbRecipes.filter((r) => {
       if (r.categoryId !== category.id) return false;
       if (currentUser.role === 'Admin') return true;
@@ -395,8 +240,6 @@ async function startServer() {
 
     const totalCount = filteredRecipes.length;
     const totalPages = Math.ceil(totalCount / pageSize) || 1;
-
-    // 4. Apply pagination (OFFSET-based: SKIP (page-1)*pageSize TAKE pageSize)
     const skip = (page - 1) * pageSize;
     const paginatedItems = filteredRecipes.slice(skip, skip + pageSize);
 
@@ -404,14 +247,9 @@ async function startServer() {
       (r) => r.categoryId === category.id && r.status === 'Published'
     ).length;
 
-    const categoryDto = {
-      id: category.id,
-      name: category.name,
-      slug: category.slug,
-      description: category.description,
-      imageUrl: category.imageUrl,
+    const categoryDto: Category = {
+      ...category,
       recipeCount: publishedCount,
-      orderIndex: category.orderIndex,
     };
 
     return res.status(200).json({
@@ -426,40 +264,31 @@ async function startServer() {
     });
   });
 
-  // ==========================================
-  // FR-CAT-003: Tạo Danh mục Mới [Admin]
+  // -----------------------------------------------------------------------
+  // FR-CAT-003: Tạo Danh Mục Mới [Admin Only]
   // POST /api/v1/categories
-  // Header: Authorization: Bearer {adminJwt}
-  // Validation: name 2–50 ký tự, không chứa HTML.
-  // Slug tự động sinh từ name (slugify); nếu trùng thêm suffix số "-2", "-3"...
-  // Invalidate cache: MemoryCache.Remove("categories:all").
-  // Response: HTTP 201 Created với CategoryDto và Location header.
-  // ==========================================
+  // -----------------------------------------------------------------------
   app.post('/api/v1/categories', (req: Request, res: Response) => {
-    // 1. Kiểm tra role Admin (RequireAuthorization("Admin"))
     const currentUser = getAuthUser(req);
     if (currentUser.role !== 'Admin') {
       return res.status(403).json({
         type: 'https://tools.ietf.org/html/rfc7231#section-6.5.3',
         title: 'Forbidden',
         status: 403,
-        detail: 'Yêu cầu quyền Quản trị viên (Admin) để thực hiện thao tác tạo danh mục mới.',
+        detail: 'Yêu cầu quyền Quản trị viên (Admin) để tạo danh mục mới.',
         instance: '/api/v1/categories',
       });
     }
 
     const { name, description, imageUrl } = req.body || {};
 
-    // 2. Validation: name 2–50 ký tự, không chứa HTML
     if (!name || typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 50) {
       return res.status(422).json({
         type: 'https://tools.ietf.org/html/rfc4918#section-11.2',
         title: 'Unprocessable Entity',
         status: 422,
-        detail: 'Dữ liệu không hợp lệ: Tên danh mục (name) phải từ 2 đến 50 ký tự.',
-        errors: {
-          name: ['Tên danh mục phải có độ dài từ 2 đến 50 ký tự.'],
-        },
+        detail: 'Tên danh mục phải có độ dài từ 2 đến 50 ký tự (FR-CAT-003).',
+        errors: { name: ['Tên danh mục phải từ 2 đến 50 ký tự.'] },
         instance: '/api/v1/categories',
       });
     }
@@ -470,17 +299,13 @@ async function startServer() {
         type: 'https://tools.ietf.org/html/rfc4918#section-11.2',
         title: 'Unprocessable Entity',
         status: 422,
-        detail: 'Dữ liệu không hợp lệ: Tên danh mục và mô tả không được chứa mã HTML độc hại.',
-        errors: {
-          name: ['Không được chứa thẻ HTML.'],
-        },
+        detail: 'Tên danh mục và mô tả không được chứa mã HTML.',
+        errors: { name: ['Không được chứa thẻ HTML.'] },
         instance: '/api/v1/categories',
       });
     }
 
     const trimmedName = name.trim();
-
-    // 3. Kiểm tra Name chưa tồn tại trong database (409 Conflict)
     const existingName = dbCategories.find(
       (c) => c.name.toLowerCase() === trimmedName.toLowerCase()
     );
@@ -494,50 +319,485 @@ async function startServer() {
       });
     }
 
-    // 4. SlugHelper.Generate(name) tạo slug & Suffix nếu trùng (e.g., "-2", "-3")
-    const baseSlug = generateSlug(trimmedName);
-    let candidateSlug = baseSlug;
-    let suffix = 2;
-    while (dbCategories.some((c) => c.slug === candidateSlug)) {
-      candidateSlug = `${baseSlug}-${suffix}`;
-      suffix++;
-    }
-
-    // 5. Category.Create entity
-    const newCategory: CategoryEntity = {
+    const slug = generateUniqueCategorySlug(trimmedName);
+    const newCategory: Category = {
       id: `cat-${Date.now()}`,
       name: trimmedName,
-      slug: candidateSlug,
-      description: description ? description.trim() : `Danh mục ${trimmedName} gồm các món ăn chọn lọc.`,
+      slug,
+      description: description ? description.trim() : `Danh mục ${trimmedName} món ăn chọn lọc.`,
       imageUrl: imageUrl && imageUrl.trim() ? imageUrl.trim() : 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=1200&q=80',
+      recipeCount: 0,
       orderIndex: dbCategories.length + 1,
-      createdAt: new Date().toISOString(),
     };
 
-    // 6. Add entity
     dbCategories.push(newCategory);
-
-    // 7. MemoryCache.Remove("categories:all") - Invalidate cache
     memoryCache.remove('categories:all');
 
-    const createdDto = {
-      id: newCategory.id,
-      name: newCategory.name,
-      slug: newCategory.slug,
-      description: newCategory.description,
-      imageUrl: newCategory.imageUrl,
-      recipeCount: 0,
-      orderIndex: newCategory.orderIndex,
-    };
-
-    // 8. Trả về HTTP 201 Created với CategoryDto và Location header
     res.setHeader('Location', `/api/v1/categories/${newCategory.slug}`);
-    return res.status(201).json(createdDto);
+    return res.status(201).json(newCategory);
   });
 
-  // ==========================================
-  // Cache Status & Invalidate helper endpoints for UI inspectability
-  // ==========================================
+  // -----------------------------------------------------------------------
+  // Admin Cập Nhật Danh Mục
+  // PUT /api/v1/categories/:id
+  // -----------------------------------------------------------------------
+  app.put('/api/v1/categories/:id', (req: Request, res: Response) => {
+    const currentUser = getAuthUser(req);
+    if (currentUser.role !== 'Admin') {
+      return res.status(403).json({
+        type: 'https://tools.ietf.org/html/rfc7231#section-6.5.3',
+        title: 'Forbidden',
+        status: 403,
+        detail: 'Chỉ Quản trị viên mới có thể cập nhật danh mục.',
+      });
+    }
+
+    const { id } = req.params;
+    const catIndex = dbCategories.findIndex((c) => c.id === id);
+    if (catIndex === -1) {
+      return res.status(404).json({
+        type: 'https://tools.ietf.org/html/rfc7231#section-6.5.4',
+        title: 'Not Found',
+        status: 404,
+        detail: 'Không tìm thấy danh mục.',
+      });
+    }
+
+    const { name, description, imageUrl, orderIndex } = req.body;
+    if (name) dbCategories[catIndex].name = name.trim();
+    if (description !== undefined) dbCategories[catIndex].description = description.trim();
+    if (imageUrl) dbCategories[catIndex].imageUrl = imageUrl.trim();
+    if (orderIndex !== undefined) dbCategories[catIndex].orderIndex = Number(orderIndex);
+
+    memoryCache.remove('categories:all');
+    return res.status(200).json(dbCategories[catIndex]);
+  });
+
+  // -----------------------------------------------------------------------
+  // Admin Xóa Danh Mục
+  // DELETE /api/v1/categories/:id
+  // -----------------------------------------------------------------------
+  app.delete('/api/v1/categories/:id', (req: Request, res: Response) => {
+    const currentUser = getAuthUser(req);
+    if (currentUser.role !== 'Admin') {
+      return res.status(403).json({
+        type: 'https://tools.ietf.org/html/rfc7231#section-6.5.3',
+        title: 'Forbidden',
+        status: 403,
+        detail: 'Chỉ Quản trị viên mới có thể xóa danh mục.',
+      });
+    }
+
+    const { id } = req.params;
+    dbCategories = dbCategories.filter((c) => c.id !== id);
+    memoryCache.remove('categories:all');
+    return res.status(200).json({ success: true, message: 'Đã xóa danh mục thành công.' });
+  });
+
+  // -----------------------------------------------------------------------
+  // RECIPES API (FR-RCP-001, FR-RCP-002)
+  // GET /api/v1/recipes
+  // Hỗ trợ tìm kiếm, lọc theo category, difficulty, maxCookTime, sắp xếp & phân trang
+  // -----------------------------------------------------------------------
+  app.get('/api/v1/recipes', (req: Request, res: Response) => {
+    const currentUser = getAuthUser(req);
+
+    const {
+      searchTerm,
+      categoryId,
+      difficulty,
+      maxCookTime,
+      sort,
+      status,
+      page = '1',
+      pageSize = '12',
+    } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page as string) || 1);
+    const limitNum = Math.max(1, Math.min(100, parseInt(pageSize as string) || 12));
+
+    let filtered = dbRecipes.filter((r) => {
+      // Role visibility
+      if (currentUser.role === 'Admin') {
+        // Admin sees all
+      } else if (currentUser.role === 'Author') {
+        // Author sees published + own
+        if (r.status !== 'Published' && r.authorId !== currentUser.id) return false;
+      } else {
+        // Guest only sees published
+        if (r.status !== 'Published') return false;
+      }
+
+      // Explicit status filter
+      if (status && r.status !== status) return false;
+
+      // Category filter (match ID or slug)
+      if (categoryId && categoryId !== 'all') {
+        const catObj = dbCategories.find((c) => c.id === categoryId || c.slug === categoryId);
+        if (!catObj || r.categoryId !== catObj.id) return false;
+      }
+
+      // Difficulty
+      if (difficulty && difficulty !== 'All') {
+        if (r.difficulty !== difficulty) return false;
+      }
+
+      // Max cook time
+      if (maxCookTime) {
+        const maxMins = parseInt(maxCookTime as string);
+        if (!isNaN(maxMins) && maxMins > 0 && r.cookTimeMinutes > maxMins) return false;
+      }
+
+      // Search term
+      if (searchTerm && (searchTerm as string).trim()) {
+        const q = unaccent((searchTerm as string).trim());
+        const titleMatch = unaccent(r.title).includes(q);
+        const descMatch = unaccent(r.description).includes(q);
+        const ingMatch = r.ingredients?.some((ing) => unaccent(ing.name).includes(q));
+        if (!titleMatch && !descMatch && !ingMatch) return false;
+      }
+
+      return true;
+    });
+
+    // Sorting
+    filtered.sort((a, b) => {
+      if (sort === 'createdAt') {
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      }
+      if (sort === 'title') {
+        return a.title.localeCompare(b.title, 'vi');
+      }
+      if (sort === 'cookTime') {
+        return a.cookTimeMinutes - b.cookTimeMinutes;
+      }
+      if (sort === 'views') {
+        return (b.viewCount || 0) - (a.viewCount || 0);
+      }
+      // default: -createdAt
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    const totalCount = filtered.length;
+    const totalPages = Math.ceil(totalCount / limitNum) || 1;
+    const skip = (pageNum - 1) * limitNum;
+    const items = filtered.slice(skip, skip + limitNum);
+
+    // Enrich items with author & category details
+    const enrichedItems = items.map((r) => {
+      const cat = dbCategories.find((c) => c.id === r.categoryId);
+      const author = dbUsers.find((u) => u.id === r.authorId) || r.author;
+      return {
+        ...r,
+        category: cat,
+        author,
+      };
+    });
+
+    return res.status(200).json({
+      items: enrichedItems,
+      totalCount,
+      page: pageNum,
+      pageSize: limitNum,
+      totalPages,
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/v1/recipes/:slugOrId
+  // Xem chi tiết công thức, tự động tăng viewCount
+  // -----------------------------------------------------------------------
+  app.get('/api/v1/recipes/:slugOrId', (req: Request, res: Response) => {
+    const { slugOrId } = req.params;
+    const recipe = dbRecipes.find((r) => r.slug === slugOrId || r.id === slugOrId);
+
+    if (!recipe) {
+      return res.status(404).json({
+        type: 'https://tools.ietf.org/html/rfc7231#section-6.5.4',
+        title: 'Not Found',
+        status: 404,
+        detail: `Không tìm thấy công thức với định danh '${slugOrId}'.`,
+        instance: `/api/v1/recipes/${slugOrId}`,
+      });
+    }
+
+    const currentUser = getAuthUser(req);
+
+    // Check visibility for non-published recipes
+    if (recipe.status !== 'Published') {
+      const isOwner = currentUser.id === recipe.authorId || currentUser.role === 'Admin';
+      if (!isOwner) {
+        return res.status(403).json({
+          type: 'https://tools.ietf.org/html/rfc7231#section-6.5.3',
+          title: 'Forbidden',
+          status: 403,
+          detail: 'Công thức này đang ở trạng thái bản nháp hoặc đã lưu trữ. Chỉ tác giả mới có quyền xem.',
+        });
+      }
+    }
+
+    // Increment viewCount
+    recipe.viewCount = (recipe.viewCount || 0) + 1;
+
+    const cat = dbCategories.find((c) => c.id === recipe.categoryId);
+    const author = dbUsers.find((u) => u.id === recipe.authorId) || recipe.author;
+
+    return res.status(200).json({
+      ...recipe,
+      category: cat,
+      author,
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/v1/recipes
+  // Tạo công thức mới (Yêu cầu vai trò Author hoặc Admin)
+  // -----------------------------------------------------------------------
+  app.post('/api/v1/recipes', (req: Request, res: Response) => {
+    const currentUser = getAuthUser(req);
+    if (currentUser.role === 'Guest') {
+      return res.status(403).json({
+        type: 'https://tools.ietf.org/html/rfc7231#section-6.5.3',
+        title: 'Forbidden',
+        status: 403,
+        detail: 'Bạn cần đăng nhập để tạo công thức.',
+      });
+    }
+
+    const data = req.body || {};
+    if (!data.title || typeof data.title !== 'string' || data.title.trim().length < 5) {
+      return res.status(422).json({
+        type: 'https://tools.ietf.org/html/rfc4918#section-11.2',
+        title: 'Unprocessable Entity',
+        status: 422,
+        detail: 'Tiêu đề công thức phải từ 5 ký tự trở lên.',
+        errors: { title: ['Tiêu đề phải từ 5 ký tự trở lên.'] },
+      });
+    }
+
+    if (!data.categoryId) {
+      return res.status(422).json({
+        type: 'https://tools.ietf.org/html/rfc4918#section-11.2',
+        title: 'Unprocessable Entity',
+        status: 422,
+        detail: 'Vui lòng chọn danh mục cho công thức.',
+        errors: { categoryId: ['Danh mục không được để trống.'] },
+      });
+    }
+
+    const now = new Date().toISOString();
+    const slug = generateUniqueRecipeSlug(data.title.trim());
+    const newId = `recipe-${Date.now()}`;
+
+    const newRecipe: Recipe = {
+      id: newId,
+      title: data.title.trim(),
+      slug,
+      description: data.description?.trim() || '',
+      instructions: data.instructions?.trim() || '',
+      prepTimeMinutes: Number(data.prepTimeMinutes) || 15,
+      cookTimeMinutes: Number(data.cookTimeMinutes) || 30,
+      servings: Number(data.servings) || 4,
+      difficulty: data.difficulty || 'Medium',
+      status: data.status || 'Draft',
+      categoryId: data.categoryId,
+      authorId: currentUser.id,
+      author: currentUser.user,
+      createdAt: now,
+      updatedAt: now,
+      publishedAt: data.status === 'Published' ? now : undefined,
+      viewCount: 0,
+      likeCount: 0,
+      nutrition: data.nutrition || { calories: 350 },
+      steps: data.steps || [],
+      ingredients: data.ingredients || [],
+      images: data.images && data.images.length > 0 ? data.images : [
+        {
+          id: `img-${Date.now()}`,
+          recipeId: newId,
+          originalUrl: 'https://images.unsplash.com/photo-1498837167922-ddd27525d352?auto=format&fit=crop&w=1200&q=80',
+          isPrimary: true,
+          orderIndex: 1,
+        }
+      ],
+    };
+
+    dbRecipes.unshift(newRecipe);
+    memoryCache.remove('categories:all');
+
+    res.setHeader('Location', `/api/v1/recipes/${newRecipe.slug}`);
+    return res.status(201).json(newRecipe);
+  });
+
+  // -----------------------------------------------------------------------
+  // PUT /api/v1/recipes/:id
+  // Cập nhật công thức (Owner hoặc Admin)
+  // -----------------------------------------------------------------------
+  app.put('/api/v1/recipes/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const recipeIndex = dbRecipes.findIndex((r) => r.id === id);
+
+    if (recipeIndex === -1) {
+      return res.status(404).json({
+        type: 'https://tools.ietf.org/html/rfc7231#section-6.5.4',
+        title: 'Not Found',
+        status: 404,
+        detail: 'Không tìm thấy công thức cần cập nhật.',
+      });
+    }
+
+    const currentUser = getAuthUser(req);
+    const existing = dbRecipes[recipeIndex];
+
+    if (currentUser.role !== 'Admin' && existing.authorId !== currentUser.id) {
+      return res.status(403).json({
+        type: 'https://tools.ietf.org/html/rfc7231#section-6.5.3',
+        title: 'Forbidden',
+        status: 403,
+        detail: 'Bạn không có quyền chỉnh sửa công thức này.',
+      });
+    }
+
+    const data = req.body;
+    const now = new Date().toISOString();
+
+    const updatedRecipe: Recipe = {
+      ...existing,
+      ...data,
+      id: existing.id, // Immutable
+      authorId: existing.authorId, // Immutable
+      updatedAt: now,
+      slug: data.title && data.title !== existing.title ? generateUniqueRecipeSlug(data.title) : existing.slug,
+    };
+
+    dbRecipes[recipeIndex] = updatedRecipe;
+    memoryCache.remove('categories:all');
+
+    return res.status(200).json(updatedRecipe);
+  });
+
+  // -----------------------------------------------------------------------
+  // DELETE /api/v1/recipes/:id
+  // Xóa công thức (Owner hoặc Admin)
+  // -----------------------------------------------------------------------
+  app.delete('/api/v1/recipes/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const recipe = dbRecipes.find((r) => r.id === id);
+
+    if (!recipe) {
+      return res.status(404).json({
+        type: 'https://tools.ietf.org/html/rfc7231#section-6.5.4',
+        title: 'Not Found',
+        status: 404,
+        detail: 'Không tìm thấy công thức cần xóa.',
+      });
+    }
+
+    const currentUser = getAuthUser(req);
+    if (currentUser.role !== 'Admin' && recipe.authorId !== currentUser.id) {
+      return res.status(403).json({
+        type: 'https://tools.ietf.org/html/rfc7231#section-6.5.3',
+        title: 'Forbidden',
+        status: 403,
+        detail: 'Bạn không có quyền xóa công thức này.',
+      });
+    }
+
+    dbRecipes = dbRecipes.filter((r) => r.id !== id);
+    memoryCache.remove('categories:all');
+
+    return res.status(200).json({ success: true, message: 'Đã xóa công thức thành công.' });
+  });
+
+  // -----------------------------------------------------------------------
+  // PATCH /api/v1/recipes/:id/status
+  // Đổi trạng thái: Published, Draft, Archived
+  // Quy tắc nghiệp vụ: Khi Published, bắt buộc phải có ít nhất 1 bước và 1 nguyên liệu!
+  // -----------------------------------------------------------------------
+  app.patch('/api/v1/recipes/:id/status', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { status } = req.body as { status: RecipeStatus };
+
+    const recipeIndex = dbRecipes.findIndex((r) => r.id === id);
+    if (recipeIndex === -1) {
+      return res.status(404).json({
+        type: 'https://tools.ietf.org/html/rfc7231#section-6.5.4',
+        title: 'Not Found',
+        status: 404,
+        detail: 'Không tìm thấy công thức.',
+      });
+    }
+
+    const recipe = dbRecipes[recipeIndex];
+    const currentUser = getAuthUser(req);
+
+    if (currentUser.role !== 'Admin' && recipe.authorId !== currentUser.id) {
+      return res.status(403).json({
+        type: 'https://tools.ietf.org/html/rfc7231#section-6.5.3',
+        title: 'Forbidden',
+        status: 403,
+        detail: 'Bạn không có quyền đổi trạng thái công thức này.',
+      });
+    }
+
+    if (status === 'Published') {
+      if (!recipe.steps || recipe.steps.length === 0) {
+        return res.status(422).json({
+          type: 'https://tools.ietf.org/html/rfc4918#section-11.2',
+          title: 'Unprocessable Entity',
+          status: 422,
+          detail: 'Quy tắc xuất bản: Công thức bắt buộc phải có ít nhất 1 bước thực hiện.',
+          errors: { steps: ['Cần ít nhất 1 bước hướng dẫn.'] },
+        });
+      }
+      if (!recipe.ingredients || recipe.ingredients.length === 0) {
+        return res.status(422).json({
+          type: 'https://tools.ietf.org/html/rfc4918#section-11.2',
+          title: 'Unprocessable Entity',
+          status: 422,
+          detail: 'Quy tắc xuất bản: Công thức bắt buộc phải có ít nhất 1 nguyên liệu.',
+          errors: { ingredients: ['Cần ít nhất 1 nguyên liệu.'] },
+        });
+      }
+    }
+
+    const now = new Date().toISOString();
+    recipe.status = status;
+    recipe.updatedAt = now;
+    if (status === 'Published' && !recipe.publishedAt) {
+      recipe.publishedAt = now;
+    }
+
+    dbRecipes[recipeIndex] = recipe;
+    memoryCache.remove('categories:all');
+
+    return res.status(200).json(recipe);
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/v1/recipes/:id/like
+  // Toggle like
+  // -----------------------------------------------------------------------
+  app.post('/api/v1/recipes/:id/like', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const recipe = dbRecipes.find((r) => r.id === id);
+
+    if (!recipe) {
+      return res.status(404).json({
+        type: 'https://tools.ietf.org/html/rfc7231#section-6.5.4',
+        title: 'Not Found',
+        status: 404,
+        detail: 'Không tìm thấy công thức.',
+      });
+    }
+
+    recipe.likeCount = (recipe.likeCount || 0) + 1;
+    return res.status(200).json({ id: recipe.id, likeCount: recipe.likeCount });
+  });
+
+  // -----------------------------------------------------------------------
+  // Cache Status & Invalidate helper endpoints
+  // -----------------------------------------------------------------------
   app.get('/api/v1/cache/status', (req: Request, res: Response) => {
     res.json({
       cacheKeys: memoryCache.getEntries(),
@@ -550,7 +810,9 @@ async function startServer() {
     res.json({ success: true, removedKey: key, wasCached: removed });
   });
 
+  // -----------------------------------------------------------------------
   // Vite middleware for development
+  // -----------------------------------------------------------------------
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

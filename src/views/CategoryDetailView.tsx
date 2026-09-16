@@ -17,6 +17,7 @@ import {
   SlidersHorizontal
 } from 'lucide-react';
 import { Category, Recipe } from '../types';
+import { api, ProblemDetails } from '../services/api';
 
 interface CategoryDetailViewProps {
   slug: string;
@@ -51,37 +52,27 @@ export default function CategoryDetailView({ slug }: CategoryDetailViewProps) {
     setLoading(true);
     setRfcError(null);
     try {
-      const res = await fetch(`/api/v1/categories/${slug}?page=${targetPage}&pageSize=${targetPageSize}`, {
-        headers: {
-          'x-user-role': currentUser?.role || 'Guest',
-          'x-user-id': currentUser?.id || 'guest',
-        },
-      });
+      const data = await api.getCategoryBySlug(
+        slug,
+        targetPage,
+        targetPageSize,
+        currentUser?.role,
+        currentUser?.id
+      );
 
-      const data = await res.json();
       setRawResponse(data);
-
-      if (res.status === 200) {
-        setCategory(data.category);
-        setRecipes(data.recipes.items || []);
-        setPagination({
-          page: data.recipes.page,
-          pageSize: data.recipes.pageSize,
-          totalCount: data.recipes.totalCount,
-          totalPages: data.recipes.totalPages,
-        });
-      } else {
-        // RFC 7807 Error format
-        setRfcError(data);
-      }
-    } catch (err) {
-      console.error('Lỗi khi gọi GET /api/v1/categories/:slug', err);
-      setRfcError({
-        type: 'https://tools.ietf.org/html/rfc7231#section-6.6.1',
-        title: 'Internal Server Error',
-        status: 500,
-        detail: 'Không thể kết nối với máy chủ.',
+      setCategory(data.category);
+      setRecipes(data.recipes.items || []);
+      setPagination({
+        page: data.recipes.page,
+        pageSize: data.recipes.pageSize,
+        totalCount: data.recipes.totalCount,
+        totalPages: data.recipes.totalPages,
       });
+    } catch (err: any) {
+      console.error('Lỗi khi gọi GET /api/v1/categories/:slug', err);
+      setRfcError(err as ProblemDetails);
+      setRawResponse(err);
     } finally {
       setLoading(false);
     }

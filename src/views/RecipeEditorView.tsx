@@ -153,7 +153,7 @@ export default function RecipeEditorView({ recipeId }: RecipeEditorViewProps) {
   };
 
   // Save handler
-  const handleSave = (publishImmediately: boolean = false) => {
+  const handleSave = async (publishImmediately: boolean = false) => {
     if (!title.trim() || title.trim().length < 5) {
       showToast('Lỗi nhập liệu', 'Tiêu đề công thức phải từ 5 ký tự trở lên (FR-RCP-003).', 'error');
       setActiveSection('basic');
@@ -228,12 +228,12 @@ export default function RecipeEditorView({ recipeId }: RecipeEditorViewProps) {
     };
 
     if (isEditMode && existingRecipe) {
-      const res = updateRecipe(existingRecipe.id, payload);
+      const res = await updateRecipe(existingRecipe.id, payload);
       if (res.success) {
         navigate(`/recipes/${existingRecipe.slug}`);
       }
     } else {
-      const res = createRecipe(payload);
+      const res = await createRecipe(payload);
       if (res.success && res.slug) {
         navigate(`/recipes/${res.slug}`);
       }

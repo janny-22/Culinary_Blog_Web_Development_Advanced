@@ -10,16 +10,18 @@ import {
   ShieldAlert, 
   CheckCircle2, 
   Code2, 
-  Zap,
+  Zap, 
   Sparkles,
   AlertTriangle,
-  FileCode2
+  FileCode2,
+  Activity
 } from 'lucide-react';
 import { Category } from '../types';
 import DotnetArchitectureModal from '../components/DotnetArchitectureModal';
+import { api, ProblemDetails } from '../services/api';
 
 export default function CategoriesView() {
-  const { currentUser, navigate, showToast } = useApp();
+  const { currentUser, navigate, showToast, setApiActivityModalOpen } = useApp();
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,30 +46,16 @@ export default function CategoriesView() {
   const fetchCategories = async (forceRefresh = false) => {
     setLoading(true);
     try {
-      if (forceRefresh) {
-        // Option to explicitly invalidate server cache for testing
-        await fetch('/api/v1/cache/invalidate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key: 'categories:all' }),
-        });
-      }
-
-      const res = await fetch('/api/v1/categories');
-      const cacheStatus = res.headers.get('X-Cache') as 'HIT' | 'MISS' | null;
-      const ttlRemaining = res.headers.get('X-Cache-TTL-Remaining') || '3600s';
-
+      const res = await api.getCategories(forceRefresh);
       setCacheHeader({
-        status: cacheStatus || 'MISS',
-        ttl: ttlRemaining,
+        status: res.cacheStatus,
+        ttl: res.ttlRemaining || '3600s',
       });
-
-      const data = await res.json();
-      setRawApiResponse(data);
-      if (Array.isArray(data)) {
-        setCategories(data);
+      setRawApiResponse(res.data);
+      if (Array.isArray(res.data)) {
+        setCategories(res.data);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Lỗi tải danh mục:', err);
     } finally {
       setLoading(false);
@@ -97,51 +85,35 @@ export default function CategoriesView() {
 
     setSubmitting(true);
     try {
-      const res = await fetch('/api/v1/categories', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer mock-admin-token',
-          'x-user-role': currentUser?.role === 'Admin' ? 'Admin' : 'Guest',
-          'x-user-id': currentUser?.id || 'guest',
-        },
-        body: JSON.stringify({
+      const res = await api.createCategory(
+        {
           name: catName.trim(),
           description: catDesc.trim() || undefined,
           imageUrl: catImage.trim() || undefined,
-        }),
-      });
+        },
+        currentUser?.role === 'Admin' ? 'Admin' : 'Guest',
+        currentUser?.id || 'guest'
+      );
 
-      const result = await res.json();
+      setCreatedLocation(res.location);
+      showToast(
+        'Tạo danh mục thành công (201 Created)',
+        `Slug: ${res.category.slug} • Cache đã được invalidate tự động!`,
+        'success'
+      );
 
-      if (res.status === 201) {
-        const location = res.headers.get('Location') || `/api/v1/categories/${result.slug}`;
-        setCreatedLocation(location);
-        showToast(
-          'Tạo danh mục thành công (201 Created)',
-          `Slug: ${result.slug} • Cache đã được invalidate tự động!`,
-          'success'
-        );
-        // Refresh categories
-        await fetchCategories();
-        setTimeout(() => {
-          setShowCreateModal(false);
-          setCatName('');
-          setCatDesc('');
-          setCatImage('');
-          setCreatedLocation(null);
-        }, 1200);
-      } else if (res.status === 403) {
-        setFormError('Lỗi 403 Forbidden: Yêu cầu quyền Quản trị viên (Admin) để tạo danh mục mới.');
-      } else if (res.status === 409) {
-        setFormError(`Lỗi 409 Conflict: ${result.detail || 'Tên danh mục đã tồn tại trong hệ thống.'}`);
-      } else if (res.status === 422) {
-        setFormError(`Lỗi 422 Unprocessable Entity: ${result.detail || 'Dữ liệu không hợp lệ.'}`);
-      } else {
-        setFormError(result.detail || 'Đã xảy ra lỗi khi tạo danh mục.');
-      }
+      // Refresh categories from API
+      await fetchCategories();
+      setTimeout(() => {
+        setShowCreateModal(false);
+        setCatName('');
+        setCatDesc('');
+        setCatImage('');
+        setCreatedLocation(null);
+      }, 1200);
     } catch (err: any) {
-      setFormError('Lỗi kết nối tới server.');
+      const pErr = err as ProblemDetails;
+      setFormError(pErr.detail || pErr.title || 'Đã xảy ra lỗi khi tạo danh mục.');
     } finally {
       setSubmitting(false);
     }

@@ -31,6 +31,7 @@ export default function DashboardView() {
     unpublishRecipe, 
     archiveRecipe, 
     deleteRecipe,
+    createCategory,
     showToast
   } = useApp();
 
@@ -93,51 +94,17 @@ export default function DashboardView() {
       return;
     }
 
-    try {
-      const res = await fetch('/api/v1/categories', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer admin-jwt-token',
-          'x-user-role': currentUser?.role || 'Admin',
-          'x-user-id': currentUser?.id || 'admin',
-        },
-        body: JSON.stringify({
-          name: newCatName.trim(),
-          description: newCatDesc.trim() || undefined,
-          imageUrl: newCatImage.trim() || undefined,
-        }),
-      });
+    const res = await createCategory({
+      name: newCatName.trim(),
+      description: newCatDesc.trim() || undefined,
+      imageUrl: newCatImage.trim() || undefined,
+    });
 
-      const data = await res.json();
-
-      if (res.status === 201) {
-        // Also update local state for immediate reactivity across app
-        categories.push({
-          id: data.id,
-          name: data.name,
-          slug: data.slug,
-          description: data.description,
-          imageUrl: data.imageUrl,
-          recipeCount: 0,
-          orderIndex: data.orderIndex,
-        });
-        showToast('Tạo danh mục thành công (201 Created)', `Đã tạo "${data.name}" với slug "/${data.slug}". Cache "categories:all" đã được xóa!`, 'success');
-        setShowNewCatModal(false);
-        setNewCatName('');
-        setNewCatDesc('');
-        setNewCatImage('');
-      } else if (res.status === 409) {
-        showToast('Trùng lặp (409 Conflict)', data.detail || 'Tên danh mục đã tồn tại trong hệ thống.', 'error');
-      } else if (res.status === 403) {
-        showToast('Không có quyền (403 Forbidden)', data.detail || 'Yêu cầu quyền Admin.', 'error');
-      } else if (res.status === 422) {
-        showToast('Không hợp lệ (422)', data.detail || 'Dữ liệu không đúng quy chuẩn.', 'error');
-      } else {
-        showToast('Lỗi', data.detail || 'Không thể tạo danh mục.', 'error');
-      }
-    } catch (err) {
-      showToast('Lỗi kết nối', 'Không thể kết nối đến API server.', 'error');
+    if (res.success) {
+      setShowNewCatModal(false);
+      setNewCatName('');
+      setNewCatDesc('');
+      setNewCatImage('');
     }
   };
 

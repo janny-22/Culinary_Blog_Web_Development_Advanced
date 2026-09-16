@@ -16,10 +16,13 @@ import {
   BookOpen,
   LogOut,
   ChevronDown,
-  FileCode2
+  FileCode2,
+  Activity,
+  RefreshCw
 } from 'lucide-react';
 import { Role } from '../types';
 import DotnetArchitectureModal from './DotnetArchitectureModal';
+import ApiActivityModal from './ApiActivityModal';
 
 export default function Navbar() {
   const { 
@@ -33,7 +36,13 @@ export default function Navbar() {
     togglePauseTimer,
     resetTimer,
     setHealthModalOpen,
-    bookmarks
+    bookmarks,
+    apiConnected,
+    apiLatencyMs,
+    isApiSyncing,
+    syncWithBackend,
+    apiActivityModalOpen,
+    setApiActivityModalOpen,
   } = useApp();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -66,7 +75,16 @@ export default function Navbar() {
             Next.js App Router + .NET 10 Minimal APIs Architecture
           </span>
         </div>
-        <div className="flex items-center gap-4 text-blue-200">
+        <div className="flex items-center gap-3 text-blue-200">
+          <button
+            onClick={() => setApiActivityModalOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-500/30 hover:bg-blue-500/50 text-blue-100 hover:text-white text-[11px] font-bold border border-blue-400/40 transition cursor-pointer"
+            title="Xem nhật ký trao đổi HTTP API giữa .tsx và backend"
+          >
+            <Activity className="w-3 h-3 text-blue-300 animate-pulse" />
+            <span>Nhật ký API ({apiLatencyMs}ms)</span>
+          </button>
+          <span className="text-blue-400">|</span>
           <button
             onClick={() => setShowDotnetModal(true)}
             className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-purple-600/50 hover:bg-purple-500 text-purple-200 hover:text-white text-[11px] font-bold border border-purple-400/40 transition cursor-pointer"
@@ -77,15 +95,14 @@ export default function Navbar() {
           </button>
           <span className="text-blue-400">|</span>
           <button 
-            onClick={() => setHealthModalOpen(true)}
+            onClick={() => syncWithBackend()}
+            disabled={isApiSyncing}
             className="hover:text-white transition flex items-center gap-1 text-[11px] cursor-pointer"
-            title="Kiểm tra trạng thái hệ thống (FR-OBS-001)"
+            title="Nhấn để đồng bộ dữ liệu mới nhất từ Backend API"
           >
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>API Health: OK</span>
+            <RefreshCw className={`w-3 h-3 ${isApiSyncing ? 'animate-spin text-amber-400' : 'text-emerald-400'}`} />
+            <span>{apiConnected ? 'API: Connected' : 'API: Reconnecting'}</span>
           </button>
-          <span className="text-blue-400">|</span>
-          <span>PostgreSQL 16 FTS • Redis 7 • MinIO</span>
         </div>
       </div>
 
@@ -432,6 +449,12 @@ export default function Navbar() {
       <DotnetArchitectureModal 
         isOpen={showDotnetModal} 
         onClose={() => setShowDotnetModal(false)} 
+      />
+
+      {/* Live API Traffic Inspector Modal */}
+      <ApiActivityModal
+        isOpen={apiActivityModalOpen}
+        onClose={() => setApiActivityModalOpen(false)}
       />
     </header>
   );
